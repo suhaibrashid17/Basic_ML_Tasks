@@ -173,7 +173,13 @@ public:
 		delete dz;
 		delete dw;
 		delete a;
-
+		delete z;
+		delete intermediate_stuff_back_1;
+		delete intermediate_stuff_back_2;
+		delete dw_trans;
+		delete y_pred_tr;
+		delete br;
+		delete tr;
 	}
 };
 class Model {
