@@ -55,8 +55,7 @@ public:
 		delete value;
 	}
 };
-Matrix* matmul(Matrix * a, Matrix * b) {
-	Matrix* resultant_matrix = new Matrix(a->rows, b->cols);
+void matmul(Matrix * a, Matrix * b, Matrix* resultant_matrix) {
 	for (int i = 0; i < a->rows; i++) {
 		for (int k = 0; k < b->cols; k++) {
 			double sum = 0.0;
@@ -66,7 +65,6 @@ Matrix* matmul(Matrix * a, Matrix * b) {
 			resultant_matrix->value[i][k] = sum;
 		}
 	}
-	return resultant_matrix;
 }
 Matrix* transpose(Matrix* a) {
 	Matrix* resultant_matrix = new Matrix(a->cols, a->rows);
@@ -78,40 +76,33 @@ Matrix* transpose(Matrix* a) {
 	return resultant_matrix;
 }
 
-Matrix* sigmoid(Matrix* z) {
-	Matrix* resultant_matrix = new Matrix(z->rows, z->cols);
+void sigmoid(Matrix* z, Matrix* resultant_matrix) {
 	for (int i = 0; i < z->rows; i++) {
 		for (int j = 0; j < z->cols; j++) {
 			resultant_matrix->value[i][j] = 1.0/(1.0 + exp(-z->value[i][j]));
 		}
 	}
-	return resultant_matrix;
 }
 
 
-Matrix* elementwise_multiply(Matrix * mat1, Matrix * mat2) {
+void elementwise_multiply(Matrix * mat1, Matrix * mat2, Matrix* resultant_matrix) {
 	if (mat1->rows != mat2->rows || mat1->cols != mat2->cols) {
 		std::cerr << "Error: Matrices must have the same dimensions for element-wise multiplication." << std::endl;
-		return nullptr;
+		return;
 	}
-
-	Matrix* resultant_matrix = new Matrix(mat1->rows, mat1->cols);
 	for (int i = 0; i < mat1->rows; ++i) {
 		for (int j = 0; j < mat1->cols; ++j) {
 			resultant_matrix->value[i][j] = mat1->value[i][j] * mat2->value[i][j];
 		}
 	}
-	return resultant_matrix;
 }
 
-Matrix* const_sub(double scalar, Matrix* mat) {
-	Matrix* resultant_matrix = new Matrix(mat->rows, mat->cols);
+void const_sub(double scalar, Matrix* mat, Matrix* resultant_matrix) {
 	for (int i = 0; i < mat->rows; i++) {
 		for (int j = 0; j < mat->cols; j++) {
 			resultant_matrix->value[i][j] = scalar - mat->value[i][j];
 		}
 	}
-	return resultant_matrix;
 }
 
 double sum(Matrix* mat) {
@@ -144,15 +135,12 @@ Matrix* scalar_mul(double scalar, Matrix* mat) {
 }
 
 
-Matrix* matadd(Matrix* mat1, Matrix* mat2) {
-	Matrix* resultant_matrix = new Matrix(mat1->rows, mat1->cols);
+void matadd(Matrix* mat1, Matrix* mat2, Matrix* resultant_matrix) {
 	for (int i = 0; i < mat1->rows; ++i) {
 		for (int j = 0; j < mat1->cols; ++j) {
 			resultant_matrix->value[i][j] = mat1->value[i][j] + mat2->value[0][i];
 		}
 	}
-
-	return resultant_matrix;
 }
 
 class Dense {
@@ -165,6 +153,9 @@ public:
 	Matrix* dw;
 	double db;
 	Matrix* a;
+	Matrix* z;
+	Matrix* intermediate_stuff_back_1;
+	Matrix* intermediate_stuff_back_2;
 	Dense(int in, int out) {
 		in_features = in;
 		out_features = out;
@@ -211,18 +202,14 @@ public:
 	void forward(Matrix* train_x) {
 		for (int i = 0; i < num_layers; i++) {
 			if (i == 0) {
-				Matrix* dz_temp = matmul(train_x, layers[i]->weights);
-				Matrix* z = matadd(dz_temp,layers[i]->bias);
-				layers[i]->a = sigmoid(z);
-				delete dz_temp;
-				delete z;
+				matmul(train_x, layers[i]->weights, layers[i]->z);
+				matadd(layers[i]->z,layers[i]->bias, layers[i]->z);
+				sigmoid(layers[i]->z, layers[i]->a);
 			}
 			else {
-				Matrix* dz_temp = matmul(layers[i - 1]->a, layers[i]->weights);
-				Matrix* z = matadd(dz_temp,layers[i]->bias);
-				layers[i]->a = sigmoid(z);
-				delete dz_temp;
-				delete z;
+				matmul(layers[i - 1]->a, layers[i]->weights, layers[i]->z);
+				matadd(layers[i]->z, layers[i]->bias, layers[i]->z);
+				sigmoid(layers[i]->z, layers[i]->a);
 			}
 		}
 	}
@@ -239,7 +226,7 @@ public:
 			if (i == num_layers - 1) {
 				Matrix* tr = transpose(layers[i]->a);
 				layers[i]->dz = *tr - train_y;
-				layers[i]->dw = matmul(layers[i]->dz, layers[i - 1]->a);
+				matmul(layers[i]->dz, layers[i - 1]->a, layers[i]->dw);
 				layers[i]->db = (1.0 / (train_x->rows)) * sum(layers[i]->dz);
 				Matrix* dw_trans = transpose(layers[i]->dw);
 				layers[i]->weights = *layers[i]->weights - scalar_mul(learning_rate,dw_trans);
@@ -251,12 +238,15 @@ public:
 			}
 			else if (i == 0) {
 				Matrix* tr = transpose(layers[i]->a);
-				Matrix* c_sub = const_sub(1, tr);
-				Matrix* a_1_a = elementwise_multiply(tr, c_sub);
-				Matrix* w_dz = matmul(layers[i + 1]->weights, layers[i + 1]->dz);
-				Matrix* w_dz_a_1_a = elementwise_multiply(w_dz, a_1_a);
-				layers[i]->dz = scalar_mul(1.0 / (train_x->rows), w_dz_a_1_a);
-				layers[i]->dw = matmul(layers[i]->dz, train_x);
+				const_sub(1, tr, layers[i]->intermediate_stuff_back_1);
+				elementwise_multiply(tr, layers[i]->intermediate_stuff_back_1, layers[i]->intermediate_stuff_back_1);
+				matmul(layers[i + 1]->weights, layers[i + 1]->dz, layers[i]->intermediate_stuff_back_2);
+				elementwise_multiply(layers[i]->intermediate_stuff_back_1, layers[i]->intermediate_stuff_back_2, layers[i]->intermediate_stuff_back_2);
+
+
+				layers[i]->dz = scalar_mul(1.0 / (train_x->rows), layers[i]->intermediate_stuff_back_2);
+				
+				matmul(layers[i]->dz, train_x, layers[i]->dw);
 				layers[i]->db = (1.0 / (train_x->rows)) * sum(layers[i]->dz);
 				Matrix* dw_trans = transpose(layers[i]->dw);
 				layers[i]->weights = *layers[i]->weights - scalar_mul(learning_rate, dw_trans);
@@ -265,21 +255,17 @@ public:
 				delete dw_trans;
 				delete br;
 				delete tr;
-				delete c_sub;
-				delete a_1_a;
-				delete w_dz;
-				delete w_dz_a_1_a;
 			}
 			else {
 				Matrix* tr = transpose(layers[i]->a);
 				// tr -> (train_examples, num_nodes_in_i)
 				// just a scary way of saying 1/m matmul(w[i+1],dz[i+1]) * a[i] * (1 - a[i])
-				Matrix* c_sub = const_sub(1, tr);
-				Matrix* a_1_a = elementwise_multiply(tr, c_sub);
-				Matrix* w_dz = matmul(layers[i + 1]->weights, layers[i + 1]->dz);
-				Matrix* w_dz_a_1_a = elementwise_multiply(w_dz, a_1_a);
-				layers[i]->dz = scalar_mul(1.0 / (train_x->rows), w_dz_a_1_a);				
-				layers[i]->dw = matmul(layers[i]->dz, layers[i - 1]->a);
+				const_sub(1, tr, layers[i]->intermediate_stuff_back_1);
+				elementwise_multiply(tr, layers[i]->intermediate_stuff_back_1, layers[i]->intermediate_stuff_back_1);
+				matmul(layers[i + 1]->weights, layers[i + 1]->dz, layers[i]->intermediate_stuff_back_2);
+				elementwise_multiply(layers[i]->intermediate_stuff_back_1, layers[i]->intermediate_stuff_back_2, layers[i]->intermediate_stuff_back_2);
+				layers[i]->dz = scalar_mul(1.0 / (train_x->rows), layers[i]->intermediate_stuff_back_2);
+				matmul(layers[i]->dz, layers[i - 1]->a, layers[i]->dw);
 				layers[i]->db = (1.0 / (train_x->rows))* sum(layers[i]->dz);
 				Matrix* dw_trans = transpose(layers[i]->dw);
 				layers[i]->weights = *layers[i]->weights - scalar_mul(learning_rate, dw_trans);
@@ -288,14 +274,19 @@ public:
 				delete dw_trans;
 				delete br;
 				delete tr;
-				delete c_sub;
-				delete a_1_a;
-				delete w_dz;
-				delete w_dz_a_1_a;
 			}
 		}
 	}
 	void train(Matrix* train_x, Matrix*train_y, double learning_rate, int epochs) {
+
+		for (int i = 0; i < num_layers; i++) {
+			layers[i]->intermediate_stuff_back_1 = new Matrix(layers[i]->out_features, train_x->rows);
+			layers[i]->intermediate_stuff_back_2 = new Matrix(layers[i]->out_features, train_x->rows);
+
+			layers[i]->dw = new Matrix(layers[i]->out_features, layers[i]->in_features);
+			layers[i]->z = new Matrix(train_x->rows, layers[i]->out_features);
+			layers[i]->a = new Matrix(train_x->rows, layers[i]->out_features);
+		}
 		for (int epoch = 0; epoch < epochs; epoch++) {
 			forward(train_x);
 			if (epoch % 100 == 0) {
@@ -327,7 +318,7 @@ int main() {
 	// x should be (training_examples, num_features)
 	// y should be (1, training_examples)
 	double x[4][2] = {{0.0,0.0},{0.0,1.0},{1.0,0.0},{1.0,1.0}};
-	double y[1][4] = { {0.0,0.0,0.0,1.0} };
+	double y[1][4] = { {0.0,1.0,1.0,0.0} };
 	Matrix* X = new Matrix(4, 2);
 	Matrix* Y = new Matrix(1, 4);
 	for (int i = 0; i < 4; i++) {
