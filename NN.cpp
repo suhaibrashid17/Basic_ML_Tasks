@@ -1,6 +1,7 @@
 // NN v1.0
 // Just for binary classification
 // Loss prints -inf sometimes idk why
+#include <chrono>
 #include<iostream>
 using namespace std;
 #include<random>
@@ -66,14 +67,12 @@ void matmul(Matrix * a, Matrix * b, Matrix* resultant_matrix) {
 		}
 	}
 }
-Matrix* transpose(Matrix* a) {
-	Matrix* resultant_matrix = new Matrix(a->cols, a->rows);
+void transpose(Matrix* a, Matrix* resultant_matrix) {
 	for (int i = 0; i < a->rows; i++) {
 		for (int j = 0; j < a->cols; j++) {
 			resultant_matrix->value[j][i] = a->value[i][j];
 		}
 	}
-	return resultant_matrix;
 }
 
 void sigmoid(Matrix* z, Matrix* resultant_matrix) {
@@ -114,14 +113,12 @@ double sum(Matrix* mat) {
 	}
 	return summ;
 }
-Matrix* broadcast(double scalar, Matrix* shape_mat) {
-	Matrix* resultant_matrix = new Matrix(shape_mat->rows, shape_mat->cols);
+void broadcast(double scalar, Matrix* shape_mat, Matrix* resultant_matrix) {
 	for (int i = 0; i < shape_mat->rows; i++) {
 		for (int j = 0; j < shape_mat->cols; j++) {
 			resultant_matrix->value[i][j] = scalar;
 		}
 	}
-	return resultant_matrix;
 }
 
 Matrix* scalar_mul(double scalar, Matrix* mat) {
@@ -156,6 +153,10 @@ public:
 	Matrix* z;
 	Matrix* intermediate_stuff_back_1;
 	Matrix* intermediate_stuff_back_2;
+	Matrix* dw_trans;
+	Matrix* y_pred_tr;
+	Matrix* br;
+	Matrix* tr;
 	Dense(int in, int out) {
 		in_features = in;
 		out_features = out;
@@ -172,6 +173,7 @@ public:
 		delete dz;
 		delete dw;
 		delete a;
+
 	}
 };
 class Model {
@@ -214,32 +216,29 @@ public:
 		}
 	}
 	double loss(Matrix* y_true, Matrix* y_pred) {
-		Matrix* y_pred_tr = transpose(y_pred);
+		transpose(y_pred, layers[0]->y_pred_tr);
 		double l = 0.0;
 		for (int i = 0; i < y_true->cols; i++) {
-			l += -y_true->value[0][i] * log(y_pred_tr->value[0][i]) - (1 - y_true->value[0][i]) * log(1 - y_pred_tr->value[0][i]);
+			l += -y_true->value[0][i] * log(layers[0]->y_pred_tr->value[0][i]) - (1 - y_true->value[0][i]) * log(1 - layers[0]->y_pred_tr->value[0][i]);
 		}
 		return l / y_true->cols;
 	}
 	void backward(Matrix* train_x, Matrix* train_y, double learning_rate) {
 		for (int i = num_layers - 1; i >= 0; i--) {
 			if (i == num_layers - 1) {
-				Matrix* tr = transpose(layers[i]->a);
-				layers[i]->dz = *tr - train_y;
+				transpose(layers[i]->a, layers[i]->tr);
+				layers[i]->dz = *(layers[i]->tr) - train_y;
 				matmul(layers[i]->dz, layers[i - 1]->a, layers[i]->dw);
 				layers[i]->db = (1.0 / (train_x->rows)) * sum(layers[i]->dz);
-				Matrix* dw_trans = transpose(layers[i]->dw);
-				layers[i]->weights = *layers[i]->weights - scalar_mul(learning_rate,dw_trans);
-				Matrix* br = broadcast(layers[i]->db, layers[i]->bias);
-				layers[i]->bias = *layers[i]->bias - scalar_mul(learning_rate, br);
-				delete dw_trans;
-				delete br;
-				delete tr;
+				transpose(layers[i]->dw, layers[i]->dw_trans);
+				layers[i]->weights = *layers[i]->weights - scalar_mul(learning_rate,layers[i]->dw_trans);
+				broadcast(layers[i]->db, layers[i]->bias, layers[i]->br);
+				layers[i]->bias = *layers[i]->bias - scalar_mul(learning_rate, layers[i]->br);
 			}
 			else if (i == 0) {
-				Matrix* tr = transpose(layers[i]->a);
-				const_sub(1, tr, layers[i]->intermediate_stuff_back_1);
-				elementwise_multiply(tr, layers[i]->intermediate_stuff_back_1, layers[i]->intermediate_stuff_back_1);
+				transpose(layers[i]->a, layers[i]->tr);
+				const_sub(1, layers[i]->tr, layers[i]->intermediate_stuff_back_1);
+				elementwise_multiply(layers[i]->tr, layers[i]->intermediate_stuff_back_1, layers[i]->intermediate_stuff_back_1);
 				matmul(layers[i + 1]->weights, layers[i + 1]->dz, layers[i]->intermediate_stuff_back_2);
 				elementwise_multiply(layers[i]->intermediate_stuff_back_1, layers[i]->intermediate_stuff_back_2, layers[i]->intermediate_stuff_back_2);
 
@@ -248,32 +247,28 @@ public:
 				
 				matmul(layers[i]->dz, train_x, layers[i]->dw);
 				layers[i]->db = (1.0 / (train_x->rows)) * sum(layers[i]->dz);
-				Matrix* dw_trans = transpose(layers[i]->dw);
-				layers[i]->weights = *layers[i]->weights - scalar_mul(learning_rate, dw_trans);
-				Matrix* br = broadcast(layers[i]->db, layers[i]->bias);
-				layers[i]->bias = *layers[i]->bias - scalar_mul(learning_rate, br);
-				delete dw_trans;
-				delete br;
-				delete tr;
+				transpose(layers[i]->dw, layers[i]->dw_trans);
+				layers[i]->weights = *layers[i]->weights - scalar_mul(learning_rate, layers[i]->dw_trans);
+				broadcast(layers[i]->db, layers[i]->bias, layers[i]->br);
+				layers[i]->bias = *layers[i]->bias - scalar_mul(learning_rate, layers[i]->br);
 			}
 			else {
-				Matrix* tr = transpose(layers[i]->a);
+
+				transpose(layers[i]->a, layers[i]->tr);
+
 				// tr -> (train_examples, num_nodes_in_i)
 				// just a scary way of saying 1/m matmul(w[i+1],dz[i+1]) * a[i] * (1 - a[i])
-				const_sub(1, tr, layers[i]->intermediate_stuff_back_1);
-				elementwise_multiply(tr, layers[i]->intermediate_stuff_back_1, layers[i]->intermediate_stuff_back_1);
+				const_sub(1, layers[i]->tr, layers[i]->intermediate_stuff_back_1);
+				elementwise_multiply(layers[i]->tr, layers[i]->intermediate_stuff_back_1, layers[i]->intermediate_stuff_back_1);
 				matmul(layers[i + 1]->weights, layers[i + 1]->dz, layers[i]->intermediate_stuff_back_2);
 				elementwise_multiply(layers[i]->intermediate_stuff_back_1, layers[i]->intermediate_stuff_back_2, layers[i]->intermediate_stuff_back_2);
 				layers[i]->dz = scalar_mul(1.0 / (train_x->rows), layers[i]->intermediate_stuff_back_2);
 				matmul(layers[i]->dz, layers[i - 1]->a, layers[i]->dw);
 				layers[i]->db = (1.0 / (train_x->rows))* sum(layers[i]->dz);
-				Matrix* dw_trans = transpose(layers[i]->dw);
-				layers[i]->weights = *layers[i]->weights - scalar_mul(learning_rate, dw_trans);
-				Matrix* br = broadcast(layers[i]->db, layers[i]->bias);
-				layers[i]->bias = *layers[i]->bias - scalar_mul(learning_rate, br);
-				delete dw_trans;
-				delete br;
-				delete tr;
+				transpose(layers[i]->dw, layers[i]->dw_trans);
+				layers[i]->weights = *layers[i]->weights - scalar_mul(learning_rate, layers[i]->dw_trans);
+				broadcast(layers[i]->db, layers[i]->bias, layers[i]->br);
+				layers[i]->bias = *layers[i]->bias - scalar_mul(learning_rate, layers[i]->br);
 			}
 		}
 	}
@@ -282,10 +277,13 @@ public:
 		for (int i = 0; i < num_layers; i++) {
 			layers[i]->intermediate_stuff_back_1 = new Matrix(layers[i]->out_features, train_x->rows);
 			layers[i]->intermediate_stuff_back_2 = new Matrix(layers[i]->out_features, train_x->rows);
-
+			layers[i]->y_pred_tr = new Matrix(train_y->rows, train_y->cols);
+			layers[i]->br = new Matrix(layers[i]->bias->rows, layers[i]->bias->cols);
 			layers[i]->dw = new Matrix(layers[i]->out_features, layers[i]->in_features);
+			layers[i]->dw_trans = new Matrix( layers[i]->in_features, layers[i]->out_features);
 			layers[i]->z = new Matrix(train_x->rows, layers[i]->out_features);
 			layers[i]->a = new Matrix(train_x->rows, layers[i]->out_features);
+			layers[i]->tr = new Matrix(layers[i]->out_features, train_x->rows);
 		}
 		for (int epoch = 0; epoch < epochs; epoch++) {
 			forward(train_x);
@@ -307,6 +305,7 @@ int Model::num_layers = 0;
 
 
 int main() {
+	auto start = std::chrono::high_resolution_clock::now();
 	Dense * D1 = new Dense(2, 128);
 	Dense* D2 = new Dense(128, 64);
 	Dense* D3 = new Dense(64, 1);
@@ -335,4 +334,9 @@ int main() {
 	model.summary();
 	model.train(X, Y, 0.1, 1000);
 	model.layers[model.num_layers - 1]->a->print();
+	auto end = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double> duration = end - start;
+
+	// Print the running time
+	cout << "Running time: " << duration.count() << " seconds" << std::endl;
 }
